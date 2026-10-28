@@ -1,9 +1,10 @@
 use cache22::{match_result, parse_request};
 use std::{
     env,
-    io::{BufReader, prelude::*},
+    io::{BufRead, BufReader, Read},
     net::TcpListener,
-    process, thread,
+    process,
+    time::Duration,
 };
 
 fn main() {
@@ -16,36 +17,59 @@ fn main() {
         process::exit(1);
     });
     println!("Cache-22 Server currently active and listening...");
+    run(listener);
+}
 
-    let mut handles = vec![];
-
-    for id in 1..5 {
-        let handle = thread::spawn(move || {
-            println!("Hello from thread #{id}");
-        });
-
-        handles.push(handle);
-    }
-
-    for handle in handles {
-        handle.join().unwrap_or_else(|err| {
-            eprintln!("Error: {err:?}");
-            process::exit(1);
-        });
-    }
-
-    //
-
+fn run(listener: TcpListener) {
+    const REQUEST_LIMIT: u64 = 8 * 1024;
     for stream in listener.incoming() {
-        let stream = stream.unwrap_or_else(|err| {
-            eprintln!("Error receiving requests: {err}");
-            process::exit(1);
-        });
+        let Ok(stream) = stream else {
+            eprintln!("Error: failed to receive request");
+            continue;
+        };
 
-        let buf_reader = BufReader::new(&stream);
-        let incoming_request = buf_reader.lines().next().unwrap().unwrap();
+        let read_timeout = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        match read_timeout {
+            Ok(_) => (),
+            Err(e) => {
+                eprintln!("Error setting read timeout: {e}");
+                continue;
+            }
+        }
 
-        let parsed_request = parse_request(&incoming_request);
+        let mut buf = vec![];
+        let mut buf_reader = BufReader::new(&stream);
+        let mut reader = buf_reader.by_ref().take(REQUEST_LIMIT);
+        let incoming_request = reader.read_until(b'\n', &mut buf);
+
+        match incoming_request {
+            Ok(count) => {
+                if count == 0 {
+                    eprintln!("client connected and left");
+                    continue;
+                } else if count >= REQUEST_LIMIT as usize && !buf.ends_with(b"\n") {
+                    eprintln!("request too large");
+                    continue;
+                } else if !buf.ends_with(b"\n") {
+                    eprintln!("request did not end in line terminator");
+                    continue;
+                }
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                continue;
+            }
+        }
+
+        let command_string = match String::from_utf8(buf) {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                continue;
+            }
+        };
+
+        let parsed_request = parse_request(&command_string);
         match_result(parsed_request);
     }
 }
