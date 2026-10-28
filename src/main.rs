@@ -7,10 +7,32 @@ use std::{
     time::Duration,
 };
 
+struct Config<'a> {
+    address: &'a String,
+    port: u16,
+}
+
+impl<'a> Config<'a> {
+    fn new(args: &'a [String]) -> Config<'a> {
+        let address = &args[1];
+        let port_binding = args[2].parse::<u16>();
+        let port = match port_binding {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Error parsing arguments: {e}");
+                process::exit(1);
+            }
+        };
+
+        Config { address, port }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let address = &args[1];
-    let port: &u16 = &args[2].parse::<u16>().unwrap();
+    let config = Config::new(&args);
+    let address = config.address;
+    let port = config.port;
 
     let listener = TcpListener::bind(format!("{address}:{port}")).unwrap_or_else(|err| {
         eprintln!("Error binding to port: {err:?}");
